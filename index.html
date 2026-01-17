@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>LEGO Tetris 3D</title>
+<title>LEGO Tetris AI vs Human</title>
 <style>
 body{
   margin:0;
@@ -13,23 +13,15 @@ body{
   height:100vh;
   font-family:Arial;
 }
-#container{
-  display:flex;
-  gap:30px;
-}
-.board{
-  text-align:center;
-}
+#container{display:flex;gap:30px;}
+.board{text-align:center;}
 canvas{
   background:#cce3ff;
   border-radius:12px;
   border:5px solid white;
 }
-h2{margin:5px;}
 #winner{
-  position:fixed;
-  top:0;left:0;
-  width:100%;height:100%;
+  position:fixed;inset:0;
   background:rgba(0,0,0,0.8);
   color:white;
   display:none;
@@ -70,9 +62,8 @@ button{
 </div>
 
 <script>
-const COLS=10,ROWS=20,BLOCK=30,WIN_SCORE=1000;
+const COLS=10, ROWS=20, BLOCK=30, WIN_SCORE=1000;
 const COLORS=[null,"#ff6b6b","#4dabf7","#ffd43b","#69db7c","#b197fc"];
-
 const SHAPES=[
  [[1,1,1,1]],
  [[2,0,0],[2,2,2]],
@@ -81,40 +72,28 @@ const SHAPES=[
  [[0,5,0],[5,5,5]]
 ];
 
-// 3D 느낌 블록 그리기
-function drawLego(ctx,x,y,color,angle=0){
+// ---------- 공통 ----------
+const rotate = m => m[0].map((_,i)=>m.map(r=>r[i]).reverse());
+const clone = m => m.map(r=>[...r]);
+
+function drawLego(ctx,x,y,color){
   const px=x*BLOCK, py=y*BLOCK;
-  const skew=BLOCK*0.2*Math.sin(angle);
-
-  // 몸체
   ctx.fillStyle=color;
-  ctx.beginPath();
-  ctx.moveTo(px,py+skew);
-  ctx.lineTo(px+BLOCK,py);
-  ctx.lineTo(px+BLOCK,py+BLOCK-skew);
-  ctx.lineTo(px,py+BLOCK);
-  ctx.closePath();
-  ctx.fill();
+  ctx.fillRect(px,py,BLOCK,BLOCK);
 
-  // 하이라이트
-  ctx.fillStyle="rgba(255,255,255,0.3)";
-  ctx.beginPath();
-  ctx.moveTo(px,py+skew);
-  ctx.lineTo(px+BLOCK,py);
-  ctx.lineTo(px+BLOCK,py+BLOCK*0.25);
-  ctx.lineTo(px,py+BLOCK*0.25+skew);
-  ctx.closePath();
-  ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.35)";
+  ctx.fillRect(px,py,BLOCK,BLOCK/4);
+  ctx.fillStyle="rgba(0,0,0,0.2)";
+  ctx.fillRect(px,py+BLOCK*0.75,BLOCK,BLOCK/4);
 
-  // 돌기
   ctx.beginPath();
-  ctx.ellipse(px+BLOCK/2, py+BLOCK/2, BLOCK/6, BLOCK/6*0.7, angle,0,Math.PI*2);
+  ctx.arc(px+BLOCK/2,py+BLOCK/2,BLOCK/6,0,Math.PI*2);
   ctx.fillStyle="rgba(255,255,255,0.4)";
   ctx.fill();
 }
 
-// 게임 클래스
-function Game(canvas,scoreEl,isAI){
+// ---------- 게임 클래스 ----------
+function Game(canvas, scoreEl, isAI){
   this.ctx=canvas.getContext("2d");
   this.scoreEl=scoreEl;
   this.isAI=isAI;
@@ -122,21 +101,25 @@ function Game(canvas,scoreEl,isAI){
   this.player={pos:{x:3,y:0},matrix:null};
   this.score=0;
   this.drop=0;
-  this.interval=1200;
-  this.angle=0; // 블록 회전 시각적 각도
+  this.interval=isAI?80:500; // ★ AI 훨씬 빠름
   this.newPiece();
 }
 
 Game.prototype.newPiece=function(){
-  this.player.matrix=SHAPES[Math.random()*SHAPES.length|0];
+  this.player.matrix=clone(SHAPES[Math.random()*SHAPES.length|0]);
   this.player.pos={x:3,y:0};
+
+  if(this.isAI){
+    const best = this.findBestMove();
+    this.player.matrix = best.matrix;
+    this.player.pos.x = best.x;
+  }
 };
 
-Game.prototype.collide=function(){
-  const m=this.player.matrix,o=this.player.pos;
-  for(let y=0;y<m.length;y++)
-    for(let x=0;x<m[y].length;x++)
-      if(m[y][x]&&(this.arena[y+o.y]?.[x+o.x])!==0)
+Game.prototype.collide=function(mat=this.player.matrix,pos=this.player.pos){
+  for(let y=0;y<mat.length;y++)
+    for(let x=0;x<mat[y].length;x++)
+      if(mat[y][x] && (this.arena[y+pos.y]?.[x+pos.x])!==0)
         return true;
   return false;
 };
@@ -160,9 +143,30 @@ Game.prototype.clear=function(){
   }
 };
 
+// ---------- AI 고속 서치 ----------
+Game.prototype.findBestMove=function(){
+  let best={score:1e9,x:0,matrix:null};
+
+  let mat=clone(this.player.matrix);
+  for(let r=0;r<4;r++){
+    for(let x=-2;x<COLS;x++){
+      let pos={x,y:0};
+      while(!this.collide(mat,pos)) pos.y++;
+      pos.y--;
+      if(pos.y<0) continue;
+
+      let height = pos.y;
+      if(height < best.score){
+        best={score:height,x,matrix:clone(mat)};
+      }
+    }
+    mat=rotate(mat);
+  }
+  return best;
+};
+
 Game.prototype.update=function(dt){
   this.drop+=dt;
-  this.angle+=0.05; // 매 프레임 조금씩 회전
   if(this.drop>this.interval){
     this.player.pos.y++;
     if(this.collide()){
@@ -174,31 +178,18 @@ Game.prototype.update=function(dt){
     this.drop=0;
   }
 
-  if(this.isAI){
-    if(Math.random()<0.03) this.player.pos.x++;
-    if(this.collide()) this.player.pos.x--;
-  }
-
   this.ctx.clearRect(0,0,300,600);
-  // 배경
-  const bg=this.ctx.createLinearGradient(0,0,0,600);
-  bg.addColorStop(0,"#ffd6e0");
-  bg.addColorStop(1,"#cdb4db");
-  this.ctx.fillStyle=bg;
-  this.ctx.fillRect(0,0,300,600);
-
-  // arena 그리기
   this.arena.forEach((r,y)=>r.forEach((v,x)=>{
-    if(v) drawLego(this.ctx,x,y,COLORS[v],this.angle);
+    if(v) drawLego(this.ctx,x,y,COLORS[v]);
   }));
-  // player 그리기
   this.player.matrix.forEach((r,y)=>r.forEach((v,x)=>{
-    if(v) drawLego(this.ctx,x+this.player.pos.x,y+this.player.pos.y,COLORS[v],this.angle);
+    if(v) drawLego(this.ctx,x+this.player.pos.x,y+this.player.pos.y,COLORS[v]);
   }));
 };
 
-const aiGame=new Game(document.getElementById("ai"),document.getElementById("scoreAI"),true);
-const humanGame=new Game(document.getElementById("human"),document.getElementById("scoreHuman"),false);
+// ---------- 실행 ----------
+const aiGame=new Game(ai,scoreAI,true);
+const humanGame=new Game(human,scoreHuman,false);
 
 let last=0;
 function loop(t=0){
@@ -209,11 +200,16 @@ function loop(t=0){
 }
 loop();
 
-// 사람 플레이 키보드
+// ---------- 사람 조작 ----------
 document.addEventListener("keydown",e=>{
   if(e.key==="ArrowLeft") humanGame.player.pos.x--;
   if(e.key==="ArrowRight") humanGame.player.pos.x++;
   if(e.key==="ArrowDown") humanGame.player.pos.y++;
+  if(e.key==="ArrowUp"){
+    const old=clone(humanGame.player.matrix);
+    humanGame.player.matrix=rotate(humanGame.player.matrix);
+    if(humanGame.collide()) humanGame.player.matrix=old;
+  }
   if(humanGame.collide()){
     if(e.key==="ArrowLeft") humanGame.player.pos.x++;
     if(e.key==="ArrowRight") humanGame.player.pos.x--;
@@ -221,7 +217,7 @@ document.addEventListener("keydown",e=>{
   }
 });
 
-// 승리 표시
+// ---------- 승리 ----------
 function endGame(winner){
   document.getElementById("winner").style.display="flex";
   document.getElementById("winnerText").textContent=`🎉 ${winner} 승리!`;
@@ -230,3 +226,4 @@ function endGame(winner){
 
 </body>
 </html>
+
